@@ -2,7 +2,7 @@ from parsers.pdf_parser import PDFParser
 
 parser = PDFParser()
 
-pdf_path = "LISN09L Topic 7 (Revised).pdf"
+pdf_path = "test_files/LISN09L Topic 7 (Revised).pdf"
 
 try:
     pages = parser.parse_pdf(pdf_path)
