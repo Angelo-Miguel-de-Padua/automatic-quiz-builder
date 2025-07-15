@@ -1,6 +1,7 @@
 import fitz
 import logging
 import re
+import pytesseract
 from typing import List
 from pathlib import Path
 from dataclasses import dataclass
@@ -45,11 +46,20 @@ class ContentBlock:
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or self._default_config()
+        self.setup_ocr()
     
     def _default_config(self) -> Dict:
         return {
             'heading_font_threshold': 14
         }
+    
+    def setup_ocr(self):
+        try:
+            pytesseract.get_tesseract_version()
+            self.ocr_available = True
+        except Exception as e:
+            logger.warning(f"OCR not available: {e}")
+            self.ocr_available = False
         
     def parse_pdf(self, file_path: str) -> List[ContentBlock]:
         file_path = Path(file_path)
@@ -134,4 +144,9 @@ class PDFParser:
         text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)
 
         return text.strip()
+    
+if __name__ == "__main__":
+    parser = PDFParser()
+    parser.setup_ocr()
+    print("OCR Available:", parser.ocr_available)
         
