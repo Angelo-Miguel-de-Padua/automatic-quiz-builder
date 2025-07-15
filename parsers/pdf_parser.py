@@ -173,11 +173,14 @@ class PDFParser:
         blocks = []
         lines = {}
 
+        # Group text by line position
         for i, text in enumerate(ocr_data['text']):
             if not text.strip():
                 continue
+                
             confidence = int(ocr_data['conf'][i])
-            if confidence < self.config['ocr_confidence_threshold']:
+            # More lenient confidence threshold
+            if confidence < 15:
                 continue
 
             y = ocr_data['top'][i]
@@ -185,13 +188,16 @@ class PDFParser:
             lines.setdefault(line_key, []).append({
                 'text': text,
                 'confidence': confidence,
-                'x': ocr_data['left'][i]
+                'x': ocr_data['left'][i],
+                'height': ocr_data['height'][i],
+                'width': ocr_data['width'][i]
             })
         
         sorted_lines = sorted(lines.items())
         current_block = []
+        last_line_y = None
 
-        for _, line_items in sorted_lines:
+        for line_y, line_items in sorted_lines:
             line_items.sort(key=lambda x: x['x'])
             line_text = ' '.join(item['text'] for item in line_items)
 
@@ -199,25 +205,54 @@ class PDFParser:
                 continue
 
             avg_conf = sum(item['confidence'] for item in line_items) / len(line_items)
+            avg_height = sum(item['height'] for item in line_items) / len(line_items)
+            
+            # Check if this should start a new block
+            should_start_new = self._should_start_new_block_improved(
+                line_text, current_block, line_y, last_line_y, avg_height
+            )
 
-            if self._should_start_new_block(line_text, current_block):
+            if should_start_new:
                 if current_block:
                     self._create_ocr_block(current_block, page_num, blocks)
                 current_block = [(line_text, avg_conf)]
+            else:
+                current_block.append((line_text, avg_conf))
+            
+            last_line_y = line_y
 
         if current_block:
             self._create_ocr_block(current_block, page_num, blocks)
         
         return blocks
     
-    def _should_start_new_block(self, line_text: str, current_block: List) -> bool:
+    def _should_start_new_block_improved(self, line_text: str, current_block: List, 
+                                   line_y: int, last_line_y: int, avg_height: float) -> bool:
         if not current_block:
             return True
-        if (len(line_text.split()) < MAX_WORDS_FOR_HEADING and
-            (line_text.isupper() or line_text.istitle())):
+        
+        # Large vertical gap suggests new section
+        if last_line_y is not None and (line_y - last_line_y) > OCR_LINE_GROUP_HEIGHT * 2:
             return True
+        
+        # Check for headings (short, uppercase/title, or significantly larger font)
+        words = line_text.split()
+        if len(words) <= MAX_WORDS_FOR_HEADING:
+            if (line_text.isupper() or line_text.istitle()) and len(words) > 1:
+                # Avoid false positives for common paragraph starters
+                if not any(line_text.lower().startswith(word) for word in 
+                        ['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'they', 'this', 'that']):
+                    return True
+        
+        # List items
         if LIST_ITEM_REGEX.match(line_text):
             return True
+        
+        # Bullet points without regex (common OCR misreads)
+        if line_text.strip().startswith(('•', '·', '-', '*')) and len(words) > 1:
+            return True
+        
+        # Continue current block for regular text
         return False
     
     def _create_ocr_block(self, block_lines: List, page_num: int, blocks: List):
