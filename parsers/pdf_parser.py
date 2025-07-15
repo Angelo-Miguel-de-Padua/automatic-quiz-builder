@@ -1,7 +1,9 @@
 import fitz
 import logging
 import re
+import io
 import pytesseract
+from PIL import Image
 from typing import List
 from pathlib import Path
 from dataclasses import dataclass
@@ -9,6 +11,9 @@ from typing import Dict, Any, Optional
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+OCR_LINE_GROUP_HEIGHT = 10
+MIN_LINE_TEXT_LENGTH = 2
 
 LIST_ITEM_REGEX = re.compile(r'^\s*[\d\-\•\*]')
 
@@ -50,7 +55,11 @@ class PDFParser:
     
     def _default_config(self) -> Dict:
         return {
-            'heading_font_threshold': 14
+            'min_text_length': 3,
+            'ocr_confidence_threshold': 30,
+            'heading_font_threshold': 14,
+            'tesseract_config': '--oem 3 --psm 6',
+            'ocr_zoom_factor': 2.0
         }
     
     def setup_ocr(self):
@@ -71,8 +80,11 @@ class PDFParser:
 
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
-            blocks = self._process_text_blocks(page, page_num + 1)
-            content_blocks.extend(blocks)
+
+            ocr_blocks = self._ocr_page(page, page_num + 1)
+            content_blocks.extend(ocr_blocks)
+        #    blocks = self._process_text_blocks(page, page_num + 1)
+        #    content_blocks.extend(blocks)
 
         doc.close()
         return content_blocks
@@ -110,6 +122,91 @@ class PDFParser:
         
         return blocks
     
+    def _ocr_page(self, page, page_num: int) -> List[ContentBlock]:
+        if not self.ocr_available:
+            return []
+        
+        try:
+            mat = fitz.Matrix(self.config['ocr_zoom_factor'], self.config['ocr_zoom_factor'])
+            pix = page.get_pixmap(matrix=mat)
+            img_data = pix.tobytes("png")
+            image = Image.open(io.BytesIO(img_data))
+
+            ocr_data = pytesseract.image_to_data(
+                image,
+                config=self.config['tesseract_config'],
+                output_type=pytesseract.Output.DICT
+            )
+            return self._group_ocr_text(ocr_data, page_num)
+        except Exception as e:
+            logger.error(f"OCR failed for page {page_num}: {e}")
+            return []
+    
+    def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
+        blocks = []
+        lines = {}
+
+        for i, text in enumerate(ocr_data['text']):
+            if not text.strip():
+                continue
+            confidence = int(ocr_data['conf'][i])
+            if confidence < self.config['ocr_confidence_threshold']:
+                continue
+
+            y = ocr_data['top'][i]
+            line_key = round(y / OCR_LINE_GROUP_HEIGHT) * OCR_LINE_GROUP_HEIGHT
+            lines.setdefault(line_key, []).append({
+                'text': text,
+                'confidence': confidence,
+                'x': ocr_data['left'][i]
+            })
+        
+        sorted_lines = sorted(lines.items())
+        current_block = []
+
+        for _, line_items in sorted_lines:
+            line_items.sort(key=lambda x: x['x'])
+            line_text = ' '.join(item['text'] for item in line_items)
+
+            if len(line_text.strip()) < MIN_LINE_TEXT_LENGTH:
+                continue
+
+            avg_conf = sum(item['confidence'] for item in line_items) / len(line_items)
+
+            if self._should_start_new_block(line_text, current_block):
+                if current_block:
+                    self._create_ocr_block(current_block, page_num, blocks)
+                current_block = [(line_text, avg_conf)]
+
+        if current_block:
+            self._create_ocr_block(current_block, page_num, blocks)
+        
+        return blocks
+    
+    def _should_start_new_block(self, line_text: str, current_block: List) -> bool:
+        if not current_block:
+            return True
+        if (len(line_text.split()) < MAX_WORDS_FOR_HEADING and
+            (line_text.isupper() or line_text.istitle())):
+            return True
+        if LIST_ITEM_REGEX.match(line_text):
+            return True
+        return False
+    
+    def _create_ocr_block(self, block_lines: List, page_num: int, blocks: List):
+        block_text = '\n'.join(line[0] for line in block_lines)
+        avg_conf = sum(line[1] for line in block_lines) / len(block_lines)
+
+        if len(block_text.strip()) >= self.config['min_text_length']:
+            content_type = self._classify_content_type(block_text)
+            blocks.append(ContentBlock(
+                content=block_text.strip(),
+                content_type=content_type,
+                page_number=page_num,
+                confidence=avg_conf / 100.0,
+                metadata={'source': 'ocr', 'line_count': len(block_lines)}
+            ))
+
     def _classify_content_type(self, text: str, font_sizes=None, font_flags=None) -> str:
         text_lower = text.lower().strip()
 
@@ -144,9 +241,4 @@ class PDFParser:
         text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)
 
         return text.strip()
-    
-if __name__ == "__main__":
-    parser = PDFParser()
-    parser.setup_ocr()
-    print("OCR Available:", parser.ocr_available)
-        
+
