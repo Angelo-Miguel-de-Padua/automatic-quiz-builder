@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from enum import Enum
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 OCR_LINE_GROUP_HEIGHT = 10
@@ -81,15 +82,30 @@ class PDFParser:
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
 
-            ocr_blocks = self._ocr_page(page, page_num + 1)
-            content_blocks.extend(ocr_blocks)
-        #    blocks = self._process_text_blocks(page, page_num + 1)
-        #    content_blocks.extend(blocks)
+            has_text = page.get_text("text").strip()
+            has_images = bool(page.get_images(full=True))
+
+            if not has_text and not has_images:
+                logger.info(f"Page {page_num + 1}: Skipping (no text, no images)")
+                continue
+
+            if has_text:
+                logger.info(f"Page {page_num + 1}: Extracting text blocks")
+                text_blocks = self._process_text_blocks(page, page_num + 1)
+                content_blocks.extend(text_blocks)
+            
+            if has_images:
+                logger.info(f"Page {page_num + 1}: Extracting images")
+                ocr_blocks = self._ocr_image(page, page_num + 1)
+                content_blocks.extend(ocr_blocks)
 
         doc.close()
         return content_blocks
     
     def _process_text_blocks(self, page, page_num: int) -> List[ContentBlock]:
+        if not page.get_text("text").strip():
+            return []
+        
         blocks = []
         text_dict = page.get_text("dict")
 
@@ -122,25 +138,36 @@ class PDFParser:
         
         return blocks
     
-    def _ocr_page(self, page, page_num: int) -> List[ContentBlock]:
+    def _ocr_image(self, page, page_num: int) -> List[ContentBlock]:
         if not self.ocr_available:
             return []
         
-        try:
-            mat = fitz.Matrix(self.config['ocr_zoom_factor'], self.config['ocr_zoom_factor'])
-            pix = page.get_pixmap(matrix=mat)
-            img_data = pix.tobytes("png")
-            image = Image.open(io.BytesIO(img_data))
+        ocr_blocks = []
+        
+        for img in page.get_images(full=True):
+            try:
+                xref = img[0]
+                base_image = page.parent.extract_image(xref)
+                image_bytes = base_image["image"]
 
-            ocr_data = pytesseract.image_to_data(
-                image,
-                config=self.config['tesseract_config'],
-                output_type=pytesseract.Output.DICT
-            )
-            return self._group_ocr_text(ocr_data, page_num)
-        except Exception as e:
-            logger.error(f"OCR failed for page {page_num}: {e}")
-            return []
+                with Image.open(io.BytesIO(image_bytes)) as image:
+                    if image.mode not in ['RGB', 'L']:
+                        image = image.convert('RGB')
+                    
+                    image = image.convert('L')
+
+                ocr_data = pytesseract.image_to_data(
+                    image,
+                    config=self.config['tesseract_config'],
+                    output_type=pytesseract.Output.DICT
+                )
+
+                ocr_blocks.extend(self._group_ocr_text(ocr_data, page_num))
+            
+            except Exception as e:
+                logger.error(f"OCR failed for image on page {page_num}: {e}")
+        
+        return ocr_blocks
     
     def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
         blocks = []
@@ -206,7 +233,7 @@ class PDFParser:
                 confidence=avg_conf / 100.0,
                 metadata={'source': 'ocr', 'line_count': len(block_lines)}
             ))
-
+    
     def _classify_content_type(self, text: str, font_sizes=None, font_flags=None) -> str:
         text_lower = text.lower().strip()
 
