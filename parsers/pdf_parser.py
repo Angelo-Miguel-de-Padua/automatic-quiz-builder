@@ -23,6 +23,8 @@ class ContentType(str, Enum):
     CODE = 'code'
     IMAGE_CAPTION = 'image_caption'
     DEFINITION = 'definition'
+    THEOREM = 'theorem'
+    EXAMPLE = 'example'
 
 
 @dataclass
@@ -32,10 +34,13 @@ class ContentBlock:
     page_number: int
     confidence: float
     metadata: Dict[str, Any] = None
+    original_content: str = None
 
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
+        if self.original_content is None:
+            self.original_content = self.content
 
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
@@ -82,10 +87,11 @@ class PDFParser:
                         font_sizes.append(span.get("size", 12))
                         font_flags.append(span.get("flags", 0))
             
-            if block_text.strip():
-                content_type = self._classify_content_type(block_text.strip(), font_sizes, font_flags)
+            cleaned_text = self.clean_text(block_text)
+            if cleaned_text:
+                content_type = self._classify_content_type(cleaned_text, font_sizes, font_flags)
                 blocks.append(ContentBlock(
-                    content=block_text.strip(),
+                    content=cleaned_text,
                     content_type=content_type,
                     page_number=page_num,
                     confidence=1.0,
@@ -120,3 +126,12 @@ class PDFParser:
             return ContentType.DEFINITION
         
         return ContentType.PARAGRAPH
+    
+    def clean_text(self, text: str) -> str:
+        text = re.sub(r'\s+', ' ', text)
+
+        text = re.sub(r'\s+([,.!?;:])', r'\1', text)
+        text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)
+
+        return text.strip()
+        
