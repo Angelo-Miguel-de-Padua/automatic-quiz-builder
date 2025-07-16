@@ -49,58 +49,16 @@ class ContentBlock:
         if self.original_content is None:
             self.original_content = self.content
 
-class PDFParser:
+class TextExtractor:
+    """Handles direct text extraction from PDF text layers"""
+    
     def __init__(self, config: Optional[Dict] = None):
-        self.config = config or self._default_config()
-        self.setup_ocr()
-    
-    def _default_config(self) -> Dict:
-        return {
+        self.config = config or {
             'min_text_length': 3,
-            'ocr_confidence_threshold': 30,
             'heading_font_threshold': 14,
-            'tesseract_config': '--oem 3 --psm 6',
-            'ocr_zoom_factor': 2.0
+            'bold_font_flag': 1 << 4,
+            'max_words_for_heading': 10
         }
-    
-    def setup_ocr(self):
-        try:
-            pytesseract.get_tesseract_version()
-            self.ocr_available = True
-        except Exception as e:
-            logger.warning(f"OCR not available: {e}")
-            self.ocr_available = False
-        
-    def parse_pdf(self, file_path: str) -> List[ContentBlock]:
-        file_path = Path(file_path)
-        if not file_path.exists() or file_path.suffix.lower() != ".pdf":
-            raise FileNotFoundError(f"Invalid file path: {file_path}")
-        
-        doc = fitz.open(str(file_path))
-        content_blocks = []
-
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-
-            has_text = page.get_text("text").strip()
-            has_images = bool(page.get_images(full=True))
-
-            if not has_text and not has_images:
-                logger.info(f"Page {page_num + 1}: Skipping (no text, no images)")
-                continue
-
-            if has_text:
-                logger.info(f"Page {page_num + 1}: Extracting text blocks")
-                text_blocks = self._process_text_blocks(page, page_num + 1)
-                content_blocks.extend(text_blocks)
-            
-            if has_images:
-                logger.info(f"Page {page_num + 1}: Extracting images")
-                ocr_blocks = self._ocr_image(page, page_num + 1)
-                content_blocks.extend(ocr_blocks)
-
-        doc.close()
-        return content_blocks
     
     def _process_text_blocks(self, page, page_num: int) -> List[ContentBlock]:
         if not page.get_text("text").strip():
@@ -138,6 +96,63 @@ class PDFParser:
         
         return blocks
     
+    def _classify_content_type(self, text: str, font_sizes=None, font_flags=None) -> str:
+        text_lower = text.lower().strip()
+
+        if font_sizes and sum(font_sizes) / len(font_sizes) > self.config.get('heading_font_threshold', 14):
+            return ContentType.HEADING
+        
+        if font_flags and any(flag & BOLD_FONT_FLAG for flag in font_flags):
+            if len(text.split()) < MAX_WORDS_FOR_HEADING:
+                return ContentType.HEADING
+        
+        if len(text.split()) < MAX_WORDS_FOR_HEADING and (text.isupper() or text.istitle()):
+            return ContentType.HEADING
+        
+        if LIST_ITEM_REGEX.match(text):
+            return ContentType.LIST
+        
+        if any(sym in text for sym in ['∑', '∫', '=', '≠', '√']):
+            return ContentType.FORMULA
+        
+        if 'def ' in text_lower or 'class ' in text_lower or 'return ' in text_lower:
+            return ContentType.CODE
+        
+        if any(phrase in text_lower for phrase in ['is defined as', 'refers to', 'means that']):
+            return ContentType.DEFINITION
+        
+        return ContentType.PARAGRAPH
+    
+    def clean_text(self, text: str) -> str:
+        text = re.sub(r'\s+', ' ', text)
+
+        text = re.sub(r'\s+([,.!?;:])', r'\1', text)
+        text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)
+
+        return text.strip()
+    
+class OCRExtractor:
+    """Handles OCR extraction from images and image-based PDFs"""
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {
+            'min_text_length': 3,
+            'ocr_confidence_threshold': 30,
+            'tesseract_config': '--oem 3 --psm 6',
+            'ocr_zoom_factor': 3.0,
+            'enhance_contrast': True,
+            'line_height_threshold': 10,
+            'word_spacing_threshold': 20,
+            'vertical_gap_threshold': 25
+        }
+
+    def setup_ocr(self):
+        try:
+            pytesseract.get_tesseract_version()
+            self.ocr_available = True
+        except Exception as e:
+            logger.warning(f"OCR not available: {e}")
+            self.ocr_available = False
+    
     def _ocr_image(self, page, page_num: int) -> List[ContentBlock]:
         if not self.ocr_available:
             return []
@@ -173,14 +188,12 @@ class PDFParser:
         blocks = []
         lines = {}
 
-        # Group text by line position
         for i, text in enumerate(ocr_data['text']):
             if not text.strip():
                 continue
-                
+
             confidence = int(ocr_data['conf'][i])
-            # More lenient confidence threshold
-            if confidence < 15:
+            if confidence < self.config['ocr_confidence_threshold']:
                 continue
 
             y = ocr_data['top'][i]
@@ -206,9 +219,8 @@ class PDFParser:
 
             avg_conf = sum(item['confidence'] for item in line_items) / len(line_items)
             avg_height = sum(item['height'] for item in line_items) / len(line_items)
-            
-            # Check if this should start a new block
-            should_start_new = self._should_start_new_block_improved(
+
+            should_start_new = self._should_start_new_block(
                 line_text, current_block, line_y, last_line_y, avg_height
             )
 
@@ -226,33 +238,26 @@ class PDFParser:
         
         return blocks
     
-    def _should_start_new_block_improved(self, line_text: str, current_block: List, 
-                                   line_y: int, last_line_y: int, avg_height: float) -> bool:
+    def _should_start_new_block(self, line_text: str, current_block: List, line_y: int, last_line_y: int, avg_height: float) -> bool:
         if not current_block:
             return True
         
-        # Large vertical gap suggests new section
         if last_line_y is not None and (line_y - last_line_y) > OCR_LINE_GROUP_HEIGHT * 2:
             return True
         
-        # Check for headings (short, uppercase/title, or significantly larger font)
         words = line_text.split()
         if len(words) <= MAX_WORDS_FOR_HEADING:
             if (line_text.isupper() or line_text.istitle()) and len(words) > 1:
-                # Avoid false positives for common paragraph starters
-                if not any(line_text.lower().startswith(word) for word in 
-                        ['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'they', 'this', 'that']):
+                if not any(line_text.lower().startswith(word) for word in
+                           ['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'they', 'this', 'that']):
                     return True
-        
-        # List items
+            
         if LIST_ITEM_REGEX.match(line_text):
             return True
         
-        # Bullet points without regex (common OCR misreads)
         if line_text.strip().startswith(('•', '·', '-', '*')) and len(words) > 1:
             return True
         
-        # Continue current block for regular text
         return False
     
     def _create_ocr_block(self, block_lines: List, page_num: int, blocks: List):
@@ -268,39 +273,40 @@ class PDFParser:
                 confidence=avg_conf / 100.0,
                 metadata={'source': 'ocr', 'line_count': len(block_lines)}
             ))
-    
-    def _classify_content_type(self, text: str, font_sizes=None, font_flags=None) -> str:
-        text_lower = text.lower().strip()
 
-        if font_sizes and sum(font_sizes) / len(font_sizes) > self.config.get('heading_font_threshold', 14):
-            return ContentType.HEADING
-        
-        if font_flags and any(flag & BOLD_FONT_FLAG for flag in font_flags):
-            if len(text.split()) < MAX_WORDS_FOR_HEADING:
-                return ContentType.HEADING
-        
-        if len(text.split()) < MAX_WORDS_FOR_HEADING and (text.isupper() or text.istitle()):
-            return ContentType.HEADING
-        
-        if LIST_ITEM_REGEX.match(text):
-            return ContentType.LIST
-        
-        if any(sym in text for sym in ['∑', '∫', '=', '≠', '√']):
-            return ContentType.FORMULA
-        
-        if 'def ' in text_lower or 'class ' in text_lower or 'return ' in text_lower:
-            return ContentType.CODE
-        
-        if any(phrase in text_lower for phrase in ['is defined as', 'refers to', 'means that']):
-            return ContentType.DEFINITION
-        
-        return ContentType.PARAGRAPH
-    
-    def clean_text(self, text: str) -> str:
-        text = re.sub(r'\s+', ' ', text)
+class PDFParser:
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {}
+        self.text_extractor = TextExtractor(self.config.get('text_extraction', {}))
+        self.ocr_extractor = OCRExtractor(self.config.get('ocr', {}))
 
-        text = re.sub(r'\s+([,.!?;:])', r'\1', text)
-        text = re.sub(r'([,.!?;:])\s*', r'\1 ', text)
+    def parse_pdf(self, file_path: str) -> List[ContentBlock]:
+        file_path = Path(file_path)
+        if not file_path.exists() or file_path.suffix.lower() != ".pdf":
+            raise FileNotFoundError(f"Invalid file path: {file_path}")
+        
+        doc = fitz.open(str(file_path))
+        content_blocks = []
 
-        return text.strip()
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
 
+            has_text = page.get_text("text").strip()
+            has_images = bool(page.get_images(full=True))
+
+            if not has_text and not has_images:
+                logger.info(f"Page {page_num + 1}: Skipping (no text, no images)")
+                continue
+
+            if has_text:
+                logger.info(f"Page {page_num + 1}: Extracting text blocks")
+                text_blocks = self._process_text_blocks(page, page_num + 1)
+                content_blocks.extend(text_blocks)
+            
+            if has_images:
+                logger.info(f"Page {page_num + 1}: Extracting images")
+                ocr_blocks = self._ocr_image(page, page_num + 1)
+                content_blocks.extend(ocr_blocks)
+
+        doc.close()
+        return content_blocks
