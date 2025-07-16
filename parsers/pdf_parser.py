@@ -286,6 +286,12 @@ class OCRExtractor:
         
         return line_objects
     
+    def _looks_like_heading(self, text: str) -> bool:
+        words = text.split()
+        return (len(words) <= 10 and
+                (text.isupper() or text.istitle()) and
+                not text.lower().startswith(('the ', 'and ', 'or ', 'but ', 'in ', 'on ', 'at ')))
+    
     def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
         blocks = []
         lines = {}
