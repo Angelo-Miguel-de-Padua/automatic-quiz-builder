@@ -153,36 +153,59 @@ class OCRExtractor:
             logger.warning(f"OCR not available: {e}")
             self.ocr_available = False
     
-    def _ocr_image(self, page, page_num: int) -> List[ContentBlock]:
+    def extract_ocr_blocks(self, page, page_num: int) -> List[ContentBlock]:
         if not self.ocr_available:
             return []
         
-        ocr_blocks = []
+        ocr_blocks = []        
+        images = page.get_images(full=True)
+
+        if not images:
+            return []
         
-        for img in page.get_images(full=True):
-            try:
-                xref = img[0]
-                base_image = page.parent.extract_image(xref)
-                image_bytes = base_image["image"]
-
-                with Image.open(io.BytesIO(image_bytes)) as image:
-                    if image.mode not in ['RGB', 'L']:
-                        image = image.convert('RGB')
-                    
-                    image = image.convert('L')
-
-                ocr_data = pytesseract.image_to_data(
-                    image,
-                    config=self.config['tesseract_config'],
-                    output_type=pytesseract.Output.DICT
-                )
-
-                ocr_blocks.extend(self._group_ocr_text(ocr_data, page_num))
-            
+        for img_index, img in enumerate(images):
+            try: 
+                blocks = self._process_single_image(img, page, page_num, img_index)
+                ocr_blocks.extend(blocks)
             except Exception as e:
-                logger.error(f"OCR failed for image on page {page_num}: {e}")
+                logger.error(f"OCR failed for image {img_index} on page {page_num}: {e}")
         
         return ocr_blocks
+    
+    def _process_single_image(self, img, page, page_num: int, img_index: int) -> List[ContentBlock]:
+        xref = img[0]
+        base_image = page.parent.extract_image(xref)
+        image_bytes = base_image["image"]
+
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            best_result = None
+            best_confidence = 0
+
+            for config in self._get_ocr_configs():
+                try:
+                    enhanced_image = self._enhance_image(image.copy())
+                    ocr_data = pytesseract.image_to_data(
+                        enhanced_image,
+                        config=config,
+                        output_type=pytesseract.Output.DICT
+                    )
+
+                    confidences = [int(conf) for conf in ocr_data['conf'] if int(conf) > 0]
+                    if confidences:
+                        avg_conf = sum(confidences) / len(confidences)
+                        if avg_conf > best_confidence:
+                            best_confidence = avg_conf
+                            best_result = ocr_data
+                
+                except Exception as e:
+                    logger.debug(f"OCR config {config} failed: {e}")
+                    continue
+            
+            if best_result:
+                return self._reconstruct_text_blocks(best_result, page_num, img_index)
+            else:
+                logger.warning(f"All OCR attempts failed for image {img_index} on page {page_num}")
+                return []
     
     def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
         blocks = []
