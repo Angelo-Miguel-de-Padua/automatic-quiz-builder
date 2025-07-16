@@ -241,6 +241,51 @@ class OCRExtractor:
 
         return Image.fromarray(img_array.astype(np.uint8))
     
+    def _group_words_into_lines(self, ocr_data: Dict) -> List[Dict]:
+        words = []
+
+        for i, text in enumerate(ocr_data['text']):
+            if not text.strip():
+                continue
+
+            confidence = int(ocr_data['conf'][i])
+            if confidence < self.config['ocr_confidence_threshold']:
+                continue
+
+            words.append({
+                'text': text,
+                'confidence': confidence,
+                'left': ocr_data['left'][i],
+                'top': ocr_data['top'][i],
+                'width': ocr_data['width'][i],
+                'height': ocr_data['height'][i]
+            })
+        
+        lines = {}
+        for word in words:
+            line_key = round(word['top'] / self.config['line_height_threshold']) * self.config['line_height_threshold']
+            if line_key not in lines:
+                lines[line_key] = []
+            lines[line_key].append(word)
+        
+        for line_words in lines.values():
+            line_words.sort(key=lambda w: w['left'])
+        
+        line_objects = []
+        for line_top in sorted(lines.keys()):
+            line_words = lines[line_top]
+            line_text = ' '.join(word['text'] for word in line_words)
+            avg_confidence = sum(word['confidence'] for word in line_words) / len(line_words)
+
+            line_objects.append({
+                'text': line_text,
+                'confidence': avg_confidence,
+                'top': line_top,
+                'words': line_words
+            })
+        
+        return line_objects
+    
     def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
         blocks = []
         lines = {}
