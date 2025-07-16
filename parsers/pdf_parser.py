@@ -207,6 +207,14 @@ class OCRExtractor:
                 logger.warning(f"All OCR attempts failed for image {img_index} on page {page_num}")
                 return []
     
+    def _get_ocr_configs(self) -> List[str]:
+        return [
+            '--oem 3 --psm 6', # Uniform block of text
+            '--oem 3 --psm 4', # Single column text
+            '--oem 3 --psm 3', # Fully automatic page segmentation
+            '--oem 3 --psm 1', # Automatic page segmentation with OSD
+        ]
+    
     def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
         blocks = []
         lines = {}
