@@ -292,6 +292,10 @@ class OCRExtractor:
                 (text.isupper() or text.istitle()) and
                 not text.lower().startswith(('the ', 'and ', 'or ', 'but ', 'in ', 'on ', 'at ')))
     
+    def _looks_like_list_item(self, text: str) -> bool:
+        return (text.strip().startswith(('•', '●', '·', '-', '*')) or
+                re.match(r'^\s*\d+[\.\)]\s', text))
+    
     def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
         blocks = []
         lines = {}
