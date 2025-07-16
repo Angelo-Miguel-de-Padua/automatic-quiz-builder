@@ -3,18 +3,23 @@ import logging
 import re
 import io
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageEnhance
 from typing import List
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from enum import Enum
+import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 OCR_LINE_GROUP_HEIGHT = 10
 MIN_LINE_TEXT_LENGTH = 2
+CONTRAST_ENHANCEMENT_FACTOR = 1.2
+THRESHOLD_OFFSET = 5
+PIXEL_WHITE = 255
+PIXEL_BLACK = 0
 
 LIST_ITEM_REGEX = re.compile(r'^\s*[\d\-\•\*]')
 
@@ -214,6 +219,27 @@ class OCRExtractor:
             '--oem 3 --psm 3', # Fully automatic page segmentation
             '--oem 3 --psm 1', # Automatic page segmentation with OSD
         ]
+    
+    def _enhance_image(self, image: Image.Image) -> Image.Image:
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        width, height = image.size
+        zoom_factor = self.config['ocr_zoom_factor']
+        new_size = (int(width * zoom_factor), int(height * zoom_factor))
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
+
+        if self.config['enhance_contrast']:
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(CONTRAST_ENHANCEMENT_FACTOR)
+        
+        image = image.convert('L')
+        img_array = np.array(image)
+
+        threshold = np.mean(img_array) - THRESHOLD_OFFSET
+        img_array = np.where(img_array > threshold, PIXEL_WHITE, PIXEL_BLACK)
+
+        return Image.fromarray(img_array.astype(np.uint8))
     
     def _group_ocr_text(self, ocr_data: Dict, page_num: int) -> List[ContentBlock]:
         blocks = []
