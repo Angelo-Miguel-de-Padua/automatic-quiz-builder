@@ -93,6 +93,119 @@ def clean_text(text: str) -> str:
     
     return text.strip()
 
+def group_words_into_lines(ocr_data: Dict, config: Dict) -> List[Dict]:
+    words = []
+
+    for i, text in enumerate(ocr_data['text']):
+        if not text.strip():
+            continue
+
+        confidence = int(ocr_data['conf'][i])
+        if confidence < config['ocr_confidence_threshold']:
+            continue
+
+        words.append({
+            'text': text,
+            'confidence': confidence,
+            'left': ocr_data['left'][i],
+            'top': ocr_data['top'][i],
+            'width': ocr_data['width'][i],
+            'height': ocr_data['height'][i]
+        })
+
+    lines = {}
+    for word in words:
+        line_key = round(word['top'] / config['line_height_threshold']) * config['line_height_threshold']
+        lines.setdefault(line_key, []).append(word)
+
+    for line_words in lines.values():
+        line_words.sort(key=lambda w: w['left'])
+
+    line_objects = []
+    for line_top in sorted(lines.keys()):
+        line_words = lines[line_top]
+        line_text = ' '.join(word['text'] for word in line_words)
+        avg_confidence = sum(word['confidence'] for word in line_words) / len(line_words)
+        line_objects.append({
+            'text': line_text,
+            'confidence': avg_confidence,
+            'top': line_top,
+            'words': line_words
+        })
+
+    return line_objects
+
+def create_block_from_lines(
+    lines: List[Dict], page_num: int, img_index: int, config: Dict
+) -> Optional[ContentBlock]:
+    if not lines:
+        return None
+
+    if len(lines) == 1:
+        block_text = lines[0]['text']
+    else:
+        if any(looks_like_list_item(line['text']) for line in lines):
+            block_text = '\n'.join(line['text'] for line in lines)
+        else:
+            block_text = ' '.join(line['text'] for line in lines)
+
+    block_text = clean_text(block_text)
+    if len(block_text.strip()) < config['min_text_length']:
+        return None
+
+    avg_confidence = sum(line['confidence'] for line in lines) / len(lines)
+    content_type = classify_content(block_text, source='ocr')
+
+    return ContentBlock(
+        content=block_text,
+        content_type=content_type,
+        page_number=page_num,
+        confidence=avg_confidence / 100.0,
+        metadata={
+            'source': 'ocr',
+            'image_index': img_index,
+            'line_count': len(lines),
+            'avg_confidence': avg_confidence
+        }
+    )
+
+def group_lines_into_blocks(
+    lines: List[Dict], page_num: int, img_index: int, config: Dict
+) -> List[ContentBlock]:
+    blocks = []
+    current_block_lines = []
+
+    for i, line in enumerate(lines):
+        should_start_new_block = False
+
+        if i == 0:
+            should_start_new_block = True
+        else:
+            prev_line = lines[i-1]
+            vertical_gap = line['top'] - prev_line['top']
+
+            if vertical_gap > config['vertical_gap_threshold']:
+                should_start_new_block = True
+            elif looks_like_heading(line['text']):
+                should_start_new_block = True
+            elif looks_like_list_item(line['text']):
+                should_start_new_block = True
+
+        if should_start_new_block and current_block_lines:
+            block = create_block_from_lines(current_block_lines, page_num, img_index, config)
+            if block:
+                blocks.append(block)
+            current_block_lines = []
+
+        current_block_lines.append(line)
+
+    if current_block_lines:
+        block = create_block_from_lines(current_block_lines, page_num, img_index, config)
+        if block:
+            blocks.append(block)
+
+    return blocks
+
 def create_content_block(content: str, page_num: int, confidence: float, source: str = 'text', metadata: dict = None, config: dict = None) -> Optional[ContentBlock]:
     cleaned_content = clean_text(content)
     if not cleaned_content or len(cleaned_content) < 2:
@@ -117,4 +230,3 @@ def create_content_block(content: str, page_num: int, confidence: float, source:
         confidence=confidence,
         metadata=base_metadata
     )
-    
