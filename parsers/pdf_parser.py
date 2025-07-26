@@ -102,6 +102,24 @@ class OCRProcessor:
                 'text_bbox_pairs': []
             }
     
+    def _extract_bbox(self, bboxes, index):
+        if index < len(bboxes) and bboxes[index] is not None:
+            poly = bboxes[index]
+            if isinstance(poly[0], (list, np.ndarray)):
+                x_coords = [point[0] for point in poly]
+                y_coords = [point[1] for point in poly]
+            else:
+                x_coords = [poly[i] for i in range(0, len(poly), 2)]
+                y_coords = [poly[i] for i in range(1, len(poly), 2)]
+            return [
+                int(min(x_coords)),
+                int(min(y_coords)),
+                int(max(x_coords)),
+                int(max(y_coords))
+            ]
+        else:
+            return [0, index * 20, 200, (index + 1) * 20]
+    
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
