@@ -24,8 +24,6 @@ PIXEL_WHITE = 255
 PIXEL_BLACK = 0
 
 class TextProcessor:
-    """Handles direct text extraction from PDF text layers"""
-    
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {
             'min_text_length': 3,
@@ -71,7 +69,6 @@ class ImageProcessor:
         img.save(f"{output_dir}/page_{page_num}.png")
     
 class OCRProcessor:
-    """Handles OCR extraction from images and image-based PDFs"""
     def __init__(self, lang="en"):
         self.ocr = PaddleOCR(lang=lang)
         self.text_processor = TextProcessor()
@@ -136,6 +133,16 @@ class OCRProcessor:
             ]
         else:
             return [0, index * 20, 200, (index + 1) * 20]
+
+class DataFormatter:
+    def format_plain_text(self, pages_data):
+        formatted_text = []
+        for page_data in pages_data:
+            formatted_text.append(f"\n=== Page {page_data['page']} ({page_data['source']}) ===\n")
+            text = page_data["text"].strip()
+            text = re.sub(r"[ \t]+", " ", text)
+            formatted_text.append(text + "\n")
+        return "".join(formatted_text)
     
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
