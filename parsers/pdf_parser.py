@@ -3,6 +3,7 @@ import logging
 import io
 import re
 import os
+import json
 from paddleocr import PaddleOCR
 from wordsegment import segment
 from PIL import Image, ImageEnhance
@@ -156,6 +157,12 @@ class OutputManager:
         print(f"Saved plain text: {output_path}")
         return output_path
         
+    def save_structured_json(self, pages_data, base_name, custom_path=None):
+        output_path = custom_path or os.path.join(self.output_dir, f"{base_name}_structured.json")
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(pages_data, f, indent=2, ensure_ascii=False)
+        print(f"Saved structured JSON: {output_path}")
+        return output_path
     
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
