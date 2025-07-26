@@ -52,6 +52,13 @@ class TextProcessor:
             else:
                 result.append(token)
         return result
+
+class ImageProcessor:
+    def enhance_image(self, img):
+        img = img.convert("RGB")
+        img = ImageEnhance.Contrast(img).enhance(1.2)
+        img = ImageEnhance.Sharpness(img).enhance(1.3)
+        return img
     
 class OCRProcessor:
     """Handles OCR extraction from images and image-based PDFs"""
