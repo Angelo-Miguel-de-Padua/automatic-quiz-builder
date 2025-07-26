@@ -60,6 +60,11 @@ class ImageProcessor:
         img = ImageEnhance.Sharpness(img).enhance(1.3)
         return img
     
+    def resize_if_needed(self, img, max_dim=2500):
+        if img.width > max_dim or img.height > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+        return img
+    
 class OCRProcessor:
     """Handles OCR extraction from images and image-based PDFs"""
     def __init__(self, lang="en"):
