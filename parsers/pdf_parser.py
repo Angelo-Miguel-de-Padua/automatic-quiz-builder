@@ -1,7 +1,9 @@
 import fitz
 import logging
 import io
+import re
 from paddleocr import PaddleOCR
+from wordsegment import segment
 from PIL import Image, ImageEnhance
 from typing import List
 from pathlib import Path
@@ -20,7 +22,7 @@ THRESHOLD_OFFSET = 5
 PIXEL_WHITE = 255
 PIXEL_BLACK = 0
 
-class TextExtractor:
+class TextProcessor:
     """Handles direct text extraction from PDF text layers"""
     
     def __init__(self, config: Optional[Dict] = None):
@@ -34,50 +36,28 @@ class TextExtractor:
     def clean_ocr_text(self, text):
         if not text.strip():
             return ""
-        return " ".join(text)
+        return " ".join(self.segment_with_punct(text))
     
-    def _process_text_blocks(self, page, page_num: int) -> List[ContentBlock]:
-        if not page.get_text("text").strip():
-            return []
-        
-        blocks = []
-        text_dict = page.get_text("dict")
-
-        for block in text_dict.get("blocks", []):
-            if block.get("type") != 0:
-                continue
-            
-            block_text = ""
-            font_sizes = []
-            font_flags = []
-
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span.get("text", "").strip()
-                    if text:
-                        block_text += text + " "
-                        font_sizes.append(span.get("size", 12))
-                        font_flags.append(span.get("flags", 0))
-            
-            block = create_content_block(
-                content=block_text,
-                page_num=page_num,
-                confidence=1.0,
-                source='text',
-                metadata={'font_sizes': font_sizes, 'font_flags': font_flags},
-                config=self.config
-            )
-
-            if block:
-                blocks.append(block)
-        
-        return blocks
+    def segment_with_punct(self, text):
+        tokens = re.findall(r"[A-Za-z0-9]+|[^\w\s]", text)
+        result = []
+        for token in tokens:
+            if re.match(r"[A-Za-z0-9]+", token):
+                segmented = segment(token.lower())
+                idx = 0
+                for word in segmented:
+                    part = token[idx:idx+len(word)]
+                    result.append(part)
+                    idx += len(word)
+            else:
+                result.append(token)
+        return result
     
 class OCRProcessor:
     """Handles OCR extraction from images and image-based PDFs"""
     def __init__(self, lang="en"):
         self.ocr = PaddleOCR(lang=lang)
-        self.text_extractor = TextExtractor()
+        self.text_processor = TextProcessor()
     
     def process_image(self, img_array, page_num):
         try:
@@ -94,7 +74,7 @@ class OCRProcessor:
 
                     for j, (text, score) in enumerate(zip(texts,)):
                         if text and text.strip():
-                            cleaned_text = self.text_extractor.clean_ocr_text(text.strip())
+                            cleaned_text = self.text_processor.clean_ocr_text(text.strip())
                             combined_text.append(cleaned_text)
                             bbox = self._extract_bbox(bboxes, j)
                             text_bbox_pairs.append({
@@ -125,7 +105,7 @@ class OCRProcessor:
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
-        self.text_extractor = TextExtractor(self.config.get('text_extraction', {}))
+        self.text_extractor = TextProcessor(self.config.get('text_processor', {}))
         self.ocr_extractor = OCRProcessor(self.config.get('ocr', {}))
         self.ocr_extractor.setup_ocr()
 

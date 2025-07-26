@@ -1,4 +1,7 @@
 test_files/
+outputs/
+data/
+ocr_inputs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
