@@ -143,6 +143,19 @@ class DataFormatter:
             text = re.sub(r"[ \t]+", " ", text)
             formatted_text.append(text + "\n")
         return "".join(formatted_text)
+
+class OutputManager:
+    def __init__(self, output_dir="outputs"):
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+    
+    def save_plain_text(self, formatted_text, base_name, custom_path=None):
+        output_path = custom_path or os.path.join(self.output_dir, f"{base_name}_extracted.txt")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(formatted_text)
+        print(f"Saved plain text: {output_path}")
+        return output_path
+        
     
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
