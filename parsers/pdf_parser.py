@@ -1,7 +1,7 @@
 import fitz
 import logging
 import io
-import pytesseract
+from paddleocr import PaddleOCR
 from PIL import Image, ImageEnhance
 from typing import List
 from pathlib import Path
@@ -30,6 +30,11 @@ class TextExtractor:
             'bold_font_flag': 1 << 4,
             'max_words_for_heading': 10
         }
+    
+    def clean_ocr_text(self, text):
+        if not text.strip():
+            return ""
+        return " ".join(text)
     
     def _process_text_blocks(self, page, page_num: int) -> List[ContentBlock]:
         if not page.get_text("text").strip():
@@ -68,118 +73,60 @@ class TextExtractor:
         
         return blocks
     
-class OCRExtractor:
+class OCRProcessor:
     """Handles OCR extraction from images and image-based PDFs"""
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {
-            'min_text_length': 3,
-            'ocr_confidence_threshold': 30,
-            'tesseract_config': '--oem 3 --psm 6',
-            'ocr_zoom_factor': 3.0,
-            'enhance_contrast': True,
-            'line_height_threshold': 10,
-            'word_spacing_threshold': 20,
-            'vertical_gap_threshold': 25
-        }
-
-    def setup_ocr(self):
+    def __init__(self, lang="en"):
+        self.ocr = PaddleOCR(lang=lang)
+        self.text_extractor = TextExtractor()
+    
+    def process_image(self, img_array, page_num):
         try:
-            pytesseract.get_tesseract_version()
-            self.ocr_available = True
-        except Exception as e:
-            logger.warning(f"OCR not available: {e}")
-            self.ocr_available = False
-    
-    def extract_ocr_blocks(self, page, page_num: int) -> List[ContentBlock]:
-        if not self.ocr_available:
-            return []
-        
-        ocr_blocks = []        
-        images = page.get_images(full=True)
+            result = self.ocr.predict(img_array)
+            text_bbox_pairs = []
+            combined_text = []
 
-        if not images:
-            return []
-        
-        for img_index, img in enumerate(images):
-            try: 
-                blocks = self._process_single_image(img, page, page_num, img_index)
-                ocr_blocks.extend(blocks)
-            except Exception as e:
-                logger.error(f"OCR failed for image {img_index} on page {page_num}: {e}")
-        
-        return ocr_blocks
-    
-    def _process_single_image(self, img, page, page_num: int, img_index: int) -> List[ContentBlock]:
-        xref = img[0]
-        base_image = page.parent.extract_image(xref)
-        image_bytes = base_image["image"]
+            if isinstance(result, list) and len(result) > 0:
+                page_result = result[0]
+                if isinstance(page_result, dict):
+                    texts = page_result.get('rec_texts', [])
+                    scores = page_result.get('rec_scores', [1.0] * len(texts))
+                    bboxes = page_result.get('det_polys', [])
 
-        with Image.open(io.BytesIO(image_bytes)) as image:
-            best_result = None
-            best_confidence = 0
-
-            for config in self._get_ocr_configs():
-                try:
-                    enhanced_image = self._enhance_image(image.copy())
-                    ocr_data = pytesseract.image_to_data(
-                        enhanced_image,
-                        config=config,
-                        output_type=pytesseract.Output.DICT
-                    )
-
-                    confidences = [int(conf) for conf in ocr_data['conf'] if int(conf) > 0]
-                    if confidences:
-                        avg_conf = sum(confidences) / len(confidences)
-                        if avg_conf > best_confidence:
-                            best_confidence = avg_conf
-                            best_result = ocr_data
-                
-                except Exception as e:
-                    logger.debug(f"OCR config {config} failed: {e}")
-                    continue
+                    for j, (text, score) in enumerate(zip(texts,)):
+                        if text and text.strip():
+                            cleaned_text = self.text_extractor.clean_ocr_text(text.strip())
+                            combined_text.append(cleaned_text)
+                            bbox = self._extract_bbox(bboxes, j)
+                            text_bbox_pairs.append({
+                                'text': cleaned_text,
+                                'bbox': bbox,
+                                'confidence': float(score)
+                            })
+                else:
+                    print(f"Unexpected page result structure: {type(page_result)}")
             
-            if best_result:
-                lines = group_words_into_lines(best_result, self.config)
-                blocks = group_lines_into_blocks(lines, page_num, img_index, self.config)
-                return blocks
-            else:
-                logger.warning(f"All OCR attempts failed for image {img_index} on page {page_num}")
-                return []
-    
-    def _get_ocr_configs(self) -> List[str]:
-        return [
-            '--oem 3 --psm 6', # Uniform block of text
-            '--oem 3 --psm 4', # Single column text
-            '--oem 3 --psm 3', # Fully automatic page segmentation
-            '--oem 3 --psm 1', # Automatic page segmentation with OSD
-        ]
-    
-    def _enhance_image(self, image: Image.Image) -> Image.Image:
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+            ocr_text = " ".join(combined_text) if combined_text else ""
+            return {
+                'page': page_num,
+                'text': ocr_text,
+                'source': 'ocr',
+                'text_bbox_pairs': text_bbox_pairs
+            }
         
-        width, height = image.size
-        zoom_factor = self.config['ocr_zoom_factor']
-        new_size = (int(width * zoom_factor), int(height * zoom_factor))
-        image = image.resize(new_size, Image.Resampling.LANCZOS)
-
-        if self.config['enhance_contrast']:
-            enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(CONTRAST_ENHANCEMENT_FACTOR)
-        
-        image = image.convert('L')
-        img_array = np.array(image)
-
-        threshold = np.mean(img_array) - THRESHOLD_OFFSET
-        img_array = np.where(img_array > threshold, PIXEL_WHITE, PIXEL_BLACK)
-
-        return Image.fromarray(img_array.astype(np.uint8))
+        except Exception as e:
+            print(f"OCR failed: {e}")
+            return {
+                'page': page_num,
+                'text': "",
+                'source': 'ocr',
+                'text_bbox_pairs': []
+            }
     
 class PDFParser:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
         self.text_extractor = TextExtractor(self.config.get('text_extraction', {}))
-        self.ocr_extractor = OCRExtractor(self.config.get('ocr', {}))
+        self.ocr_extractor = OCRProcessor(self.config.get('ocr', {}))
         self.ocr_extractor.setup_ocr()
 
     def parse_pdf(self, file_path: str) -> List[ContentBlock]:
