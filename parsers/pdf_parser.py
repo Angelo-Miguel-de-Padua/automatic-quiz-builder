@@ -87,7 +87,7 @@ class OCRProcessor:
                     scores = page_result.get('rec_scores', [1.0] * len(texts))
                     bboxes = page_result.get('det_polys', [])
 
-                    for j, (text, score) in enumerate(zip(texts,)):
+                    for j, (text, score) in enumerate(zip(texts, scores)):
                         if text and text.strip():
                             cleaned_text = self.text_processor.clean_ocr_text(text.strip())
                             combined_text.append(cleaned_text)
@@ -248,3 +248,16 @@ class PDFParser:
             results['files_saved']['plain_text'] = text_path
 
         return results
+
+def main():
+    pdf_file = "test_files/LISN09L Topic 7 (Revised).pdf"
+    extractor = PDFParser(ocr_lang="en", output_dir="outputs")
+    print("\nProcessing PDF and saving all formats...")
+    results = extractor.process_pdf(pdf_file, save_all_formats=True)
+    print("\nFiles saved:")
+    for format_name, file_path in results['files_saved'].items():
+        print(f"  {format_name}: {file_path}")
+
+
+if __name__ == "__main__":
+    main()
