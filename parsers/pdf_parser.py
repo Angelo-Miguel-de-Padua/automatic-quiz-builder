@@ -2,6 +2,7 @@ import fitz
 import logging
 import io
 import re
+import os
 from paddleocr import PaddleOCR
 from wordsegment import segment
 from PIL import Image, ImageEnhance
@@ -64,6 +65,10 @@ class ImageProcessor:
         if img.width > max_dim or img.height > max_dim:
             img.thumbnail((max_dim, max_dim), Image.LANCZOS)
         return img
+    
+    def save_debug_image(self, img, page_num, output_dir="ocr_inputs"):
+        os.makedirs(output_dir, exist_ok=True)
+        img.save(f"{output_dir}/page_{page_num}.png")
     
 class OCRProcessor:
     """Handles OCR extraction from images and image-based PDFs"""
