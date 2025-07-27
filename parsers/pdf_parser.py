@@ -5,33 +5,16 @@ import re
 import os
 import json
 from paddleocr import PaddleOCR
-from wordsegment import segment
-from PIL import Image, ImageEnhance
-from typing import List
-from pathlib import Path
-from typing import Dict, Optional
+from wordsegment import segment, load
+from PIL import Image, ImageEnhance, ImageOps
 import numpy as np
-
-from utils.content_utils import ContentBlock, create_content_block, group_words_into_lines, group_lines_into_blocks
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-OCR_LINE_GROUP_HEIGHT = 10
-MIN_LINE_TEXT_LENGTH = 2
-CONTRAST_ENHANCEMENT_FACTOR = 1.2
-THRESHOLD_OFFSET = 5
-PIXEL_WHITE = 255
-PIXEL_BLACK = 0
-
 class TextProcessor:
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {
-            'min_text_length': 3,
-            'heading_font_threshold': 14,
-            'bold_font_flag': 1 << 4,
-            'max_words_for_heading': 10
-        }
+    def __init__(self):
+        load()
     
     def clean_ocr_text(self, text):
         if not text.strip():
@@ -58,6 +41,7 @@ class ImageProcessor:
         img = img.convert("RGB")
         img = ImageEnhance.Contrast(img).enhance(1.2)
         img = ImageEnhance.Sharpness(img).enhance(1.3)
+        img = ImageOps.expand(img, border=10, fill='white')
         return img
     
     def resize_if_needed(self, img, max_dim=2500):
@@ -72,7 +56,7 @@ class ImageProcessor:
 class OCRProcessor:
     def __init__(self, lang="en"):
         self.ocr = PaddleOCR(lang=lang)
-        self.text_processor = TextProcessor()
+        self.text_processor = TextProcessor()   
     
     def process_image(self, img_array, page_num):
         try:
@@ -82,6 +66,7 @@ class OCRProcessor:
 
             if isinstance(result, list) and len(result) > 0:
                 page_result = result[0]
+                
                 if isinstance(page_result, dict):
                     texts = page_result.get('rec_texts', [])
                     scores = page_result.get('rec_scores', [1.0] * len(texts))
@@ -167,15 +152,16 @@ class OutputManager:
 class PDFParser:
     def __init__(self, ocr_lang="en", output_dir="outputs"):
         self.ocr_processor = OCRProcessor(ocr_lang)
-        self.image_processor = ImageProcessor()
+        self.image_processor = ImageProcessor() 
         self.data_formatter = DataFormatter()
         self.output_manager = OutputManager(output_dir)
+        self.doc = None 
 
     def extract_from_pdf(self, pdf_path):
-        doc = fitz.open(pdf_path)
+        self.doc = fitz.open(pdf_path)  
         try:
-            for i in range(len(doc)):
-                page = doc[i]
+            for i in range(len(self.doc)):
+                page = self.doc[i]
                 txt = page.get_text("text").strip()
                 has_text = bool(txt)
                 has_images = len(page.get_images(full=True)) > 0
@@ -190,13 +176,13 @@ class PDFParser:
                         'text': txt,
                         'bbox': [0, 0, int(page_rect.width), int(page_rect.height)]
                     })
-                
+
                 if has_images:
                     print(f"[IMG] Page {i+1} has {len(page.get_images(full=True))} images -> OCRing them")
                     image_pairs = self._process_page_images_with_ocr(page, i + 1)
                     combined_text += "\n" + " ".join([pair['text'] for pair in image_pairs])
                     text_bbox_pairs.extend(image_pairs)
-                
+
                 if has_text or has_images:
                     yield {
                         'page': i + 1,
@@ -208,15 +194,16 @@ class PDFParser:
                 else:
                     print(f"[EMPTY] Page {i+1} has no text and no image")
         finally:
-            doc.close()
-    
+            self.doc.close()
+            self.doc = None  
+
     def _process_page_images_with_ocr(self, page, page_num):
         image_pairs = []
         images = page.get_images(full=True)
         for img_index, img in enumerate(images):
             xref = img[0]
             try:
-                base_image = page.parent.extract_image(xref)
+                base_image = self.doc.extract_image(xref)  
                 image_bytes = base_image["image"]
                 img_pil = Image.open(io.BytesIO(image_bytes))
                 img_pil = self.image_processor.enhance_image(img_pil)
