@@ -72,6 +72,14 @@ class ImageAnalyzer:
                     local_std_blocks.append(np.std(block))
         
         return np.mean(local_std_blocks) if local_std_blocks else 0
+    
+    def _determine_contrast_target(text_density: float) -> int:
+        if text_density > 0.2:
+            return 38   # high density
+        elif text_density > 0.1:
+            return 42   # medium density
+        else:
+            return 46   # low density 
 
 class ImageProcessor:
     def enhance_image(self, img):
