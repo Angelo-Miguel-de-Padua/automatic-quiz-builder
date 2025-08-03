@@ -12,6 +12,9 @@ import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+TEXT_DENSITY_MAX_THRESHOLD = 80
+TEXT_DENSITY_DYNAMIC_RATIO = 0.7
+
 class TextCleaner:
     def __init__(self):
         load()
@@ -38,6 +41,12 @@ class TextCleaner:
                 
         return result
 
+class ImageAnalyzer:
+    def _calculate_text_density(gray_array: np.ndarray) -> float:
+        mean_brightness = np.mean(gray_array)
+        threshold = min(TEXT_DENSITY_MAX_THRESHOLD, mean_brightness * TEXT_DENSITY_DYNAMIC_RATIO)
+        return np.sum(gray_array <= threshold) / gray_array.size
+
 class ImageProcessor:
     def enhance_image(self, img):
         img = img.convert("RGB")
@@ -45,11 +54,7 @@ class ImageProcessor:
         img = ImageEnhance.Sharpness(img).enhance(1.3)
         img = ImageOps.expand(img, border=10, fill='white')
         return img
-    
-    def _calculate_text_density(self, gray_array):
-        text_density = np.sum(gray_array <= 80) / gray_array.size
-        return text_density
-    
+
     def resize_if_needed(self, img, max_dim=2500):
         if img.width > max_dim or img.height > max_dim:
             img.thumbnail((max_dim, max_dim), Image.LANCZOS)
