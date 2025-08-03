@@ -57,6 +57,21 @@ class ImageAnalyzer:
                    if cv2.contourArea(contour) > MIN_CONTOUR_AREA]
         
         return np.median(heights) if heights else 0
+    
+    def _calculate_background_uniformity(image: Image.Image) -> float:
+        gray_array = np.image(image.convert("L"))
+        height, width = gray_array.shape
+
+        local_std_blocks = []
+        block_size = 32
+
+        for y in range(0, height, block_size):
+            for x in range(0, width, block_size):
+                block = gray_array[y:y+block_size, x:x+block_size]
+                if block_size > 0:
+                    local_std_blocks.append(np.std(block))
+        
+        return np.mean(local_std_blocks) if local_std_blocks else 0
 
 class ImageProcessor:
     def enhance_image(self, img):
