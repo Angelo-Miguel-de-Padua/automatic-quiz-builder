@@ -4,6 +4,7 @@ import io
 import re
 import os
 import json
+import cv2
 from paddleocr import PaddleOCR
 from wordsegment import segment, load
 from PIL import Image, ImageEnhance, ImageOps
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 TEXT_DENSITY_MAX_THRESHOLD = 80
 TEXT_DENSITY_DYNAMIC_RATIO = 0.7
+MIN_CONTOUR_AREA = 10
 
 class TextCleaner:
     def __init__(self):
@@ -46,6 +48,15 @@ class ImageAnalyzer:
         mean_brightness = np.mean(gray_array)
         threshold = min(TEXT_DENSITY_MAX_THRESHOLD, mean_brightness * TEXT_DENSITY_DYNAMIC_RATIO)
         return np.sum(gray_array <= threshold) / gray_array.size
+    
+    def _estimate_text_height(gray_array: np.ndarray) -> float:
+        _, binary = cv2.threshold(gray_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(255 - binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        heights = [cv2.boundingRect(contours)[3] for contour in contours
+                   if cv2.contourArea(contour) > MIN_CONTOUR_AREA]
+        
+        return np.median(heights) if heights else 0
 
 class ImageProcessor:
     def enhance_image(self, img):
