@@ -12,7 +12,7 @@ import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class TextProcessor:
+class TextCleaner:
     def __init__(self):
         load()
     
@@ -24,6 +24,7 @@ class TextProcessor:
     def segment_with_punct(self, text):
         tokens = re.findall(r"[A-Za-z0-9]+|[^\w\s]", text)
         result = []
+
         for token in tokens:
             if re.match(r"[A-Za-z0-9]+", token):
                 segmented = segment(token.lower())
@@ -34,6 +35,7 @@ class TextProcessor:
                     idx += len(word)
             else:
                 result.append(token)
+                
         return result
 
 class ImageProcessor:
@@ -44,6 +46,10 @@ class ImageProcessor:
         img = ImageOps.expand(img, border=10, fill='white')
         return img
     
+    def _calculate_text_density(self, gray_array):
+        text_density = np.sum(gray_array <= 80) / gray_array.size
+        return text_density
+    
     def resize_if_needed(self, img, max_dim=2500):
         if img.width > max_dim or img.height > max_dim:
             img.thumbnail((max_dim, max_dim), Image.LANCZOS)
@@ -53,10 +59,10 @@ class ImageProcessor:
         os.makedirs(output_dir, exist_ok=True)
         img.save(f"{output_dir}/page_{page_num}.png")
     
-class OCRProcessor:
+class OCREngine:
     def __init__(self, lang="en"):
         self.ocr = PaddleOCR(lang=lang)
-        self.text_processor = TextProcessor()   
+        self.text_processor = TextCleaner()   
     
     def process_image(self, img_array, page_num):
         try:
@@ -120,7 +126,7 @@ class OCRProcessor:
         else:
             return [0, index * 20, 200, (index + 1) * 20]
 
-class DataFormatter:
+class TextFormatter:
     def format_plain_text(self, pages_data):
         formatted_text = []
         for page_data in pages_data:
@@ -151,9 +157,9 @@ class OutputManager:
     
 class PDFParser:
     def __init__(self, ocr_lang="en", output_dir="outputs"):
-        self.ocr_processor = OCRProcessor(ocr_lang)
+        self.ocr_processor = OCREngine(ocr_lang)
         self.image_processor = ImageProcessor() 
-        self.data_formatter = DataFormatter()
+        self.data_formatter = TextFormatter()
         self.output_manager = OutputManager(output_dir)
         self.doc = None 
 
