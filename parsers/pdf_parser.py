@@ -130,10 +130,15 @@ class ImageProcessor:
         image = self._apply_gamma_correction(image, gamma=0.9)
         
         # Intelligent denoising and scaling
-        image = self._apply_intelligent_denoising(image, stats)
+        image = self._apply_adaptive_denoising(image, stats)
         image = self._scale_small_text(image, stats)
         
         return image
+    
+    def _enhance_standard_text(self, image: Image.Image, stats: dict) -> Image.Image:
+        """Apply enhancements for standard-sized text."""
+        image = self._apply_contrast_enhancement(image, stats, is_small_text=False)
+        return self._apply_adaptive_denoising(image, stats)
     
     def _apply_contrast_enhancement(self, image: Image.Image, stats: dict, is_small_text: bool = False) -> Image.Image:
         if is_small_text:
