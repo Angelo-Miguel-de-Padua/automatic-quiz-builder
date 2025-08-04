@@ -146,6 +146,27 @@ class ImageProcessor:
         img_array = np.power(img_array, gamma)
         return Image.fromarray((img_array * 255).astype(np.uint8))
     
+    def _apply_adaptive_denoising(self, image: Image.Image, stats: dict) -> Image.Image:
+        gray_array = np.array(image.convert("L"))
+
+        if stats['has_small_text']:
+            h_value = 5 if stats['has_very_small_text'] else 7
+            template_window_size = 5 if stats['has_very_small_text'] else 7
+            search_window_size = 15 if stats['has_very_small_text'] else 18
+
+            gray_array = cv2.fastNlMeansDenoising(
+                gray_array.astype(np.uint8), None, h_value, template_window_size, search_window_size
+            )
+            print(f"Applied denoising for {'very ' if stats['has_very_small_text'] else ''}small text")
+            return Image.fromarray(gray_array).convert("RGB")
+        
+        elif stats['background_uniformity'] > 30:
+            gray_array = cv2.fastNlMeansDenoising(gray_array.astype(np.uint8), None, 10, 7, 21)
+            print("Applied denoising due to background noise")
+            return Image.fromarray(gray_array).convert("RGB")
+        
+        return image
+    
     def _apply_sharpness_enhancement(self, image: Image.Image, stats: dict) -> Image.Image:
         if stats['has_small_text']:
             sharpness = 1.6 if stats['has_very_small_text'] else 1.4
