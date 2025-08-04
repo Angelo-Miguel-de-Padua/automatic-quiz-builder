@@ -50,14 +50,14 @@ class ImageAnalyzer:
         gray = image.convert("L")
         gray_array = np.array(gray)
         
-        stat = ImageStat.stat(gray)
+        stat = ImageStat.Stat(gray)
         brightness = stat.mean[0]
         contrast = stat.stddev[0]
 
         text_density = ImageAnalyzer._calculate_text_density(gray_array)
         text_height = ImageAnalyzer._estimate_text_height(gray_array)
         background_uniformity = ImageAnalyzer._calculate_background_uniformity(gray_array)
-        contrast_target = ImageAnalyzer._determine_contrast_target(gray_array)
+        contrast_target = ImageAnalyzer._determine_contrast_target(text_density)
 
         stats = {
             'brightness': brightness,
@@ -87,7 +87,7 @@ class ImageAnalyzer:
         _, binary = cv2.threshold(gray_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(255 - binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        heights = [cv2.boundingRect(contours)[3] for contour in contours
+        heights = [cv2.boundingRect(contour)[3] for contour in contours
                    if cv2.contourArea(contour) > MIN_CONTOUR_AREA]
         
         return np.median(heights) if heights else 0
@@ -118,13 +118,13 @@ class ImageAnalyzer:
 
 class ImageProcessor:
     def __init__(self):
-        self.analyzer = ImageAnalyzer()
+        pass
 
     def enhance_image(self, image: Image.Image) -> Image.Image:
         print("Starting image enhancement...")
 
         image = image.convert("RGB")
-        stats = self.analyzer.analyze_image_comprehensive(image)
+        stats = ImageAnalyzer.analyze_image_comprehensive(image)
 
         if stats['has_small_text']:
             image = self._enhance_small_text(image, stats)
@@ -225,10 +225,10 @@ class ImageProcessor:
         edge_thickness = max(20, int(min(width, height) * 0.05))
 
         edge_analyses = {
-            'top': np.mean(gray_array[:edge_thickness, :] < self.EDGE_CONTENT_THRESHOLD),
-            'bottom': np.mean(gray_array[-edge_thickness:, :] < self.EDGE_CONTENT_THRESHOLD),
-            'left': np.mean(gray_array[:, :edge_thickness] < self.EDGE_CONTENT_THRESHOLD),
-            'right': np.mean(gray_array[:, -edge_thickness:] < self.EDGE_CONTENT_THRESHOLD)
+            'top': np.mean(gray_array[:edge_thickness, :] < EDGE_CONTENT_THRESHOLD),
+            'bottom': np.mean(gray_array[-edge_thickness:, :] < EDGE_CONTENT_THRESHOLD),
+            'left': np.mean(gray_array[:, :edge_thickness] < EDGE_CONTENT_THRESHOLD),
+            'right': np.mean(gray_array[:, -edge_thickness:] < EDGE_CONTENT_THRESHOLD)
         }
 
         padding_multipliers = {
