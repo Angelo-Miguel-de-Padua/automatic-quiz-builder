@@ -169,7 +169,7 @@ class ImageProcessor:
         
         return ImageEnhance.Contrast(image).enhance(contrast)
     
-    def _apply_gamma_correction(self, image: Image.Image, brightness: float = None) -> Image.Image:
+    def _apply_gamma_correction(self, image: Image.Image, brightness: float = None, gamma: float = None) -> Image.Image:
         if brightness is None:
             gray = np.array(image.convert("L"))
             brightness = np.mean(gray)
