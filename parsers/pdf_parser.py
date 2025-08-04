@@ -45,6 +45,7 @@ class TextCleaner:
         return result
 
 class ImageAnalyzer:
+    @staticmethod
     def analyze_image_comprehensive(image: Image.Image) -> dict:
         gray = image.convert("L")
         gray_array = np.array(gray)
@@ -75,11 +76,13 @@ class ImageAnalyzer:
         
         return stats
 
+    @staticmethod
     def _calculate_text_density(gray_array: np.ndarray) -> float:
         mean_brightness = np.mean(gray_array)
         threshold = min(TEXT_DENSITY_MAX_THRESHOLD, mean_brightness * TEXT_DENSITY_DYNAMIC_RATIO)
         return np.sum(gray_array <= threshold) / gray_array.size
     
+    @staticmethod
     def _estimate_text_height(gray_array: np.ndarray) -> float:
         _, binary = cv2.threshold(gray_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(255 - binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -89,6 +92,7 @@ class ImageAnalyzer:
         
         return np.median(heights) if heights else 0
     
+    @staticmethod
     def _calculate_background_uniformity(gray_array: np.ndarray) -> float:
         height, width = gray_array.shape
 
@@ -103,6 +107,7 @@ class ImageAnalyzer:
         
         return np.mean(local_std_blocks) if local_std_blocks else 0
     
+    @staticmethod
     def _determine_contrast_target(text_density: float) -> int:
         if text_density > 0.2:
             return 38   # high density
