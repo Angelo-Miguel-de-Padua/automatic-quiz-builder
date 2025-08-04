@@ -167,6 +167,13 @@ class ImageProcessor:
         
         return image
     
+    def _scale_small_text(self, image: Image.Image, stats: dict) -> Image.Image:
+        scale = 2.0 if stats['has_very_small_text'] else 1.5
+        new_size = (int(image.width * scale), int(image.height * scale))
+        image = image.resize(new_size, Image.LANCZOS)
+        print(f"Upscaled image by {scale}x for small text")
+        return image
+    
     def _apply_sharpness_enhancement(self, image: Image.Image, stats: dict) -> Image.Image:
         if stats['has_small_text']:
             sharpness = 1.6 if stats['has_very_small_text'] else 1.4
