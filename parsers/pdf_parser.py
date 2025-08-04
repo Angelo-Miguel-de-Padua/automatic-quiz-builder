@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 TEXT_DENSITY_MAX_THRESHOLD = 80
 TEXT_DENSITY_DYNAMIC_RATIO = 0.7
 MIN_CONTOUR_AREA = 10
+EDGE_CONTENT_THRESHOLD = 200
 
 class TextCleaner:
     def __init__(self):
@@ -142,6 +143,31 @@ class ImageProcessor:
             print(f"Applied standard sharpening: {sharpness}")
         
         return ImageEnhance.Sharpness(image).enhance(sharpness)
+    
+    def _calculate_adaptive_edge_padding(self, image: Image.Image, base_padding: int) -> tuple:
+        gray_array = np.array(image.convert("L"))
+        width, height = image.size
+        edge_thickness = max(20, int(min(width, height) * 0.05))
+
+        edge_analyses = {
+            'top': np.mean(gray_array[:edge_thickness, :] < self.EDGE_CONTENT_THRESHOLD),
+            'bottom': np.mean(gray_array[-edge_thickness:, :] < self.EDGE_CONTENT_THRESHOLD),
+            'left': np.mean(gray_array[:, :edge_thickness] < self.EDGE_CONTENT_THRESHOLD),
+            'right': np.mean(gray_array[:, -edge_thickness:] < self.EDGE_CONTENT_THRESHOLD)
+        }
+
+        padding_multipliers = {
+            edge: 1.5 if content_density >= 0.1 else 1.0
+            for edge, content_density in edge_analyses.items()
+        }
+
+        return (
+            int(base_padding * padding_multipliers['left']),
+            int(base_padding * padding_multipliers['top']),
+            int(base_padding * padding_multipliers['right']),
+            int(base_padding * padding_multipliers['bottom'])
+        )
+
 
     def resize_if_needed(self, img, max_dim=2500):
         if img.width > max_dim or img.height > max_dim:
