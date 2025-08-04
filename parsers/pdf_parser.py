@@ -112,31 +112,40 @@ class ImageAnalyzer:
             return 46   # low density 
 
 class ImageProcessor:
-    def enhance_image(self, img):
-        img = img.convert("RGB")
-        img = ImageEnhance.Contrast(img).enhance(1.2)
-        img = ImageEnhance.Sharpness(img).enhance(1.3)
-        img = ImageOps.expand(img, border=10, fill='white')
-        return img
-    
+    def __init__(self):
+        self.analyzer = ImageAnalyzer()
+
+    def enhance_image(self, image: Image.Image) -> Image.Image:
+        print("Starting image enhancement...")
+
+        image = image.convert("RGB")
+        stats = self.analyzer.analyze_image_comprehensive(image)
+
+        if stats['has_small_text']:
+            image = self._enhance_small_text(image, stats)
+        else:
+            image = self._enhance_standard_text(image, stats)
+
+        image = self._apply_sharpness_enhancement(image, stats)
+        image = self._add_enhanced_adaptive_padding(image)
+
+        print("Image enhancement complete!")
+        return image
+
     def _enhance_small_text(self, image: Image.Image, stats: dict) -> Image.Image:
         """Apply specialized enhancements for small text."""
         print("Applying small text enhancements...")
         
-        # Enhanced contrast adjustment
         image = self._apply_contrast_enhancement(image, stats, is_small_text=True)
         
-        # Gamma correction
         image = self._apply_gamma_correction(image, gamma=0.9)
         
-        # Intelligent denoising and scaling
         image = self._apply_adaptive_denoising(image, stats)
         image = self._scale_small_text(image, stats)
         
         return image
     
     def _enhance_standard_text(self, image: Image.Image, stats: dict) -> Image.Image:
-        """Apply enhancements for standard-sized text."""
         image = self._apply_contrast_enhancement(image, stats, is_small_text=False)
         return self._apply_adaptive_denoising(image, stats)
     
@@ -240,7 +249,6 @@ class ImageProcessor:
               f"Left: {edge_padding[0]}, Right: {edge_padding[2]}")
         
         return image
-
 
     def resize_if_needed(self, img, max_dim=2500):
         if img.width > max_dim or img.height > max_dim:
