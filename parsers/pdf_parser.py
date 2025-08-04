@@ -134,6 +134,18 @@ class ImageProcessor:
         
         return ImageEnhance.Contrast(image).enhance(contrast)
     
+    def _apply_gamma_correction(self, image: Image.Image, brightness: float = None) -> Image.Image:
+        if brightness is None:
+            gray = np.array(image.convert("L"))
+            brightness = np.mean(gray)
+        
+        gamma = max(0.7, min(1.3, 128 / (brightness + 1)))
+        print(f"Applied adaptive gamma correction: {gamma:.3f} (brightness={brightness:.1f})")
+
+        img_array = np.array(image).astype(np.float32) / 255.0
+        img_array = np.power(img_array, gamma)
+        return Image.fromarray((img_array * 255).astype(np.uint8))
+    
     def _apply_sharpness_enhancement(self, image: Image.Image, stats: dict) -> Image.Image:
         if stats['has_small_text']:
             sharpness = 1.6 if stats['has_very_small_text'] else 1.4
