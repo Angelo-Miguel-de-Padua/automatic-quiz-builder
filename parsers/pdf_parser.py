@@ -117,6 +117,21 @@ class ImageProcessor:
         img = ImageEnhance.Sharpness(img).enhance(1.3)
         img = ImageOps.expand(img, border=10, fill='white')
         return img
+    
+    def _apply_contrast_enhancement(self, image: Image.Image, stats: dict, is_small_text: bool = False) -> Image.Image:
+        if is_small_text:
+            factor = min(1.25, (stats['contrast_target'] + 4) / max(stats['contrast'], 5))
+            print(f"Applied contrast enhancement: {factor:.3f}")
+        else:
+            if (stats['contrast'] < stats['contrast_target'] - 3 or
+                (stats['brightness'] > 235 and stats['contrast'] < 50)):
+                factor = min(1.8, stats['contrast_target'] / max(stats['contrast'], 5))
+                print(f"Enhanced contrast factor: {factor:.3f}")
+            else:
+                print("Contrast already sufficient")
+                return image
+        
+        return ImageEnhance.Contrast(image).enhance(factor)
 
     def resize_if_needed(self, img, max_dim=2500):
         if img.width > max_dim or img.height > max_dim:
