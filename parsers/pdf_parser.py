@@ -119,6 +119,22 @@ class ImageProcessor:
         img = ImageOps.expand(img, border=10, fill='white')
         return img
     
+    def _enhance_small_text(self, image: Image.Image, stats: dict) -> Image.Image:
+        """Apply specialized enhancements for small text."""
+        print("Applying small text enhancements...")
+        
+        # Enhanced contrast adjustment
+        image = self._apply_contrast_enhancement(image, stats, is_small_text=True)
+        
+        # Gamma correction
+        image = self._apply_gamma_correction(image, gamma=0.9)
+        
+        # Intelligent denoising and scaling
+        image = self._apply_intelligent_denoising(image, stats)
+        image = self._scale_small_text(image, stats)
+        
+        return image
+    
     def _apply_contrast_enhancement(self, image: Image.Image, stats: dict, is_small_text: bool = False) -> Image.Image:
         if is_small_text:
             contrast = min(1.25, (stats['contrast_target'] + 4) / max(stats['contrast'], 5))
