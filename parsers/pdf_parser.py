@@ -4,13 +4,19 @@ import io
 import re
 import os
 import json
+import cv2
 from paddleocr import PaddleOCR
 from wordsegment import segment, load
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageOps, ImageStat
 import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+TEXT_DENSITY_MAX_THRESHOLD = 80
+TEXT_DENSITY_DYNAMIC_RATIO = 0.7
+MIN_CONTOUR_AREA = 10
+EDGE_CONTENT_THRESHOLD = 200
 
 class TextCleaner:
     def __init__(self):
@@ -38,18 +44,217 @@ class TextCleaner:
                 
         return result
 
+class ImageAnalyzer:
+    @staticmethod
+    def analyze_image_comprehensive(image: Image.Image) -> dict:
+        gray = image.convert("L")
+        gray_array = np.array(gray)
+        
+        stat = ImageStat.Stat(gray)
+        brightness = stat.mean[0]
+        contrast = stat.stddev[0]
+
+        text_density = ImageAnalyzer._calculate_text_density(gray_array)
+        text_height = ImageAnalyzer._estimate_text_height(gray_array)
+        background_uniformity = ImageAnalyzer._calculate_background_uniformity(gray_array)
+        contrast_target = ImageAnalyzer._determine_contrast_target(text_density)
+
+        stats = {
+            'brightness': brightness,
+            'contrast': contrast,
+            'contrast_target': contrast_target,
+            'text_density': text_density,
+            'text_height': text_height,
+            'background_uniformity': background_uniformity,
+            'has_small_text': 0 < text_height < 10,
+            'has_very_small_text': 0 < text_height <= 8
+        }
+
+        print(f"Image analysis: brightness={brightness:.1f}, contrast={contrast:.1f}, "
+              f"text_density:{text_density:.3f}, text_height={text_height:.1f}px, "
+              f"bg_uniformity:{background_uniformity:.1f}")
+        
+        return stats
+
+    @staticmethod
+    def _calculate_text_density(gray_array: np.ndarray) -> float:
+        mean_brightness = np.mean(gray_array)
+        threshold = min(TEXT_DENSITY_MAX_THRESHOLD, mean_brightness * TEXT_DENSITY_DYNAMIC_RATIO)
+        return np.sum(gray_array <= threshold) / gray_array.size
+    
+    @staticmethod
+    def _estimate_text_height(gray_array: np.ndarray) -> float:
+        _, binary = cv2.threshold(gray_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(255 - binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        heights = [cv2.boundingRect(contour)[3] for contour in contours
+                   if cv2.contourArea(contour) > MIN_CONTOUR_AREA]
+        
+        return np.median(heights) if heights else 0
+    
+    @staticmethod
+    def _calculate_background_uniformity(gray_array: np.ndarray) -> float:
+        height, width = gray_array.shape
+
+        local_std_blocks = []
+        block_size = 32
+
+        for y in range(0, height, block_size):
+            for x in range(0, width, block_size):
+                block = gray_array[y:y+block_size, x:x+block_size]
+                if block_size > 0:
+                    local_std_blocks.append(np.std(block))
+        
+        return np.mean(local_std_blocks) if local_std_blocks else 0
+    
+    @staticmethod
+    def _determine_contrast_target(text_density: float) -> int:
+        if text_density > 0.2:
+            return 38   # high density
+        elif text_density > 0.1:
+            return 42   # medium density
+        else:
+            return 46   # low density 
+
 class ImageProcessor:
-    def enhance_image(self, img):
-        img = img.convert("RGB")
-        img = ImageEnhance.Contrast(img).enhance(1.2)
-        img = ImageEnhance.Sharpness(img).enhance(1.3)
-        img = ImageOps.expand(img, border=10, fill='white')
-        return img
+    def __init__(self):
+        pass
+
+    def enhance_image(self, image: Image.Image) -> Image.Image:
+        print("Starting image enhancement...")
+
+        image = image.convert("RGB")
+        stats = ImageAnalyzer.analyze_image_comprehensive(image)
+
+        if stats['has_small_text']:
+            image = self._enhance_small_text(image, stats)
+        else:
+            image = self._enhance_standard_text(image, stats)
+
+        image = self._apply_sharpness_enhancement(image, stats)
+        image = self._add_enhanced_adaptive_padding(image)
+
+        print("Image enhancement complete!")
+        return image
+
+    def _enhance_small_text(self, image: Image.Image, stats: dict) -> Image.Image:
+        """Apply specialized enhancements for small text."""
+        print("Applying small text enhancements...")
+        
+        image = self._apply_contrast_enhancement(image, stats, is_small_text=True)
+        
+        image = self._apply_gamma_correction(image, gamma=0.9)
+        
+        image = self._apply_adaptive_denoising(image, stats)
+        image = self._scale_small_text(image, stats)
+        
+        return image
     
-    def _calculate_text_density(self, gray_array):
-        text_density = np.sum(gray_array <= 80) / gray_array.size
-        return text_density
+    def _enhance_standard_text(self, image: Image.Image, stats: dict) -> Image.Image:
+        image = self._apply_contrast_enhancement(image, stats, is_small_text=False)
+        return self._apply_adaptive_denoising(image, stats)
     
+    def _apply_contrast_enhancement(self, image: Image.Image, stats: dict, is_small_text: bool = False) -> Image.Image:
+        if is_small_text:
+            contrast = min(1.25, (stats['contrast_target'] + 4) / max(stats['contrast'], 5))
+            print(f"Applied contrast enhancement: {contrast:.3f}")
+        else:
+            if (stats['contrast'] < stats['contrast_target'] - 3 or
+                (stats['brightness'] > 235 and stats['contrast'] < 50)):
+                contrast = min(1.8, stats['contrast_target'] / max(stats['contrast'], 5))
+                print(f"Enhanced contrast factor: {contrast:.3f}")
+            else:
+                print("Contrast already sufficient")
+                return image
+        
+        return ImageEnhance.Contrast(image).enhance(contrast)
+    
+    def _apply_gamma_correction(self, image: Image.Image, brightness: float = None, gamma: float = None) -> Image.Image:
+        if brightness is None:
+            gray = np.array(image.convert("L"))
+            brightness = np.mean(gray)
+        
+        gamma = max(0.7, min(1.3, 128 / (brightness + 1)))
+        print(f"Applied adaptive gamma correction: {gamma:.3f} (brightness={brightness:.1f})")
+
+        img_array = np.array(image).astype(np.float32) / 255.0
+        img_array = np.power(img_array, gamma)
+        return Image.fromarray((img_array * 255).astype(np.uint8))
+    
+    def _apply_adaptive_denoising(self, image: Image.Image, stats: dict) -> Image.Image:
+        gray_array = np.array(image.convert("L"))
+
+        if stats['has_small_text']:
+            h_value = 5 if stats['has_very_small_text'] else 7
+            template_window_size = 5 if stats['has_very_small_text'] else 7
+            search_window_size = 15 if stats['has_very_small_text'] else 18
+
+            gray_array = cv2.fastNlMeansDenoising(
+                gray_array.astype(np.uint8), None, h_value, template_window_size, search_window_size
+            )
+            print(f"Applied denoising for {'very ' if stats['has_very_small_text'] else ''}small text")
+            return Image.fromarray(gray_array).convert("RGB")
+        
+        elif stats['background_uniformity'] > 30:
+            gray_array = cv2.fastNlMeansDenoising(gray_array.astype(np.uint8), None, 10, 7, 21)
+            print("Applied denoising due to background noise")
+            return Image.fromarray(gray_array).convert("RGB")
+        
+        return image
+    
+    def _scale_small_text(self, image: Image.Image, stats: dict) -> Image.Image:
+        scale = 2.0 if stats['has_very_small_text'] else 1.5
+        new_size = (int(image.width * scale), int(image.height * scale))
+        image = image.resize(new_size, Image.LANCZOS)
+        print(f"Upscaled image by {scale}x for small text")
+        return image
+    
+    def _apply_sharpness_enhancement(self, image: Image.Image, stats: dict) -> Image.Image:
+        if stats['has_small_text']:
+            sharpness = 1.6 if stats['has_very_small_text'] else 1.4
+            print(f"Applied enhanced sharpening for small text: {sharpness}")
+        else:
+            sharpness = 1.2
+            print(f"Applied standard sharpening: {sharpness}")
+        
+        return ImageEnhance.Sharpness(image).enhance(sharpness)
+    
+    def _calculate_adaptive_edge_padding(self, image: Image.Image, base_padding: int) -> tuple:
+        gray_array = np.array(image.convert("L"))
+        width, height = image.size
+        edge_thickness = max(20, int(min(width, height) * 0.05))
+
+        edge_analyses = {
+            'top': np.mean(gray_array[:edge_thickness, :] < EDGE_CONTENT_THRESHOLD),
+            'bottom': np.mean(gray_array[-edge_thickness:, :] < EDGE_CONTENT_THRESHOLD),
+            'left': np.mean(gray_array[:, :edge_thickness] < EDGE_CONTENT_THRESHOLD),
+            'right': np.mean(gray_array[:, -edge_thickness:] < EDGE_CONTENT_THRESHOLD)
+        }
+
+        padding_multipliers = {
+            edge: 1.5 if content_density >= 0.1 else 1.0
+            for edge, content_density in edge_analyses.items()
+        }
+
+        return (
+            int(base_padding * padding_multipliers['left']),
+            int(base_padding * padding_multipliers['top']),
+            int(base_padding * padding_multipliers['right']),
+            int(base_padding * padding_multipliers['bottom'])
+        )
+    
+    def _add_enhanced_adaptive_padding(self, image: Image.Image) -> Image.Image:
+        width, height = image.size
+        base_padding = max(int(min(width, height) * 0.02), 15)
+        edge_padding = self._calculate_adaptive_edge_padding(image, base_padding)
+
+        image = ImageOps.expand(image, border=edge_padding, fill='white')
+
+        print(f"Applied enhanced padding - Top: {edge_padding[1]}, Bottom: {edge_padding[3]}, "
+              f"Left: {edge_padding[0]}, Right: {edge_padding[2]}")
+        
+        return image
+
     def resize_if_needed(self, img, max_dim=2500):
         if img.width > max_dim or img.height > max_dim:
             img.thumbnail((max_dim, max_dim), Image.LANCZOS)
