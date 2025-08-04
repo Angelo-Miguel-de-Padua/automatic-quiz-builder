@@ -7,7 +7,7 @@ import json
 import cv2
 from paddleocr import PaddleOCR
 from wordsegment import segment, load
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageOps, ImageStat
 import numpy as np
 
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +44,36 @@ class TextCleaner:
         return result
 
 class ImageAnalyzer:
+    def analyze_image_comprehensive(image: Image.Image) -> dict:
+        gray = image.convert("L")
+        gray_array = np.array(gray)
+        
+        stat = ImageStat.stat(gray)
+        brightness = stat.mean[0]
+        contrast = stat.stddev[0]
+
+        text_density = ImageAnalyzer._calculate_text_density(gray_array)
+        text_height = ImageAnalyzer._estimate_text_height(gray_array)
+        background_uniformity = ImageAnalyzer._calculate_background_uniformity(gray_array)
+        contrast_target = ImageAnalyzer._determine_contrast_target(gray_array)
+
+        stats = {
+            'brightness': brightness,
+            'contrast': contrast,
+            'contrast_target': contrast_target,
+            'text_density': text_density,
+            'text_height': text_height,
+            'background_uniformity': background_uniformity,
+            'has_small_text': 0 < text_height < 10,
+            'has_very_small_text': 0 < text_height <= 8
+        }
+
+        print(f"Image analysis: brightness={brightness:.1f}, contrast={contrast:.1f}, "
+              f"text_density:{text_density:.3f}, text_height={text_height:.1f}px, "
+              f"bg_uniformity:{background_uniformity:.1f}")
+        
+        return stats
+
     def _calculate_text_density(gray_array: np.ndarray) -> float:
         mean_brightness = np.mean(gray_array)
         threshold = min(TEXT_DENSITY_MAX_THRESHOLD, mean_brightness * TEXT_DENSITY_DYNAMIC_RATIO)
@@ -58,8 +88,7 @@ class ImageAnalyzer:
         
         return np.median(heights) if heights else 0
     
-    def _calculate_background_uniformity(image: Image.Image) -> float:
-        gray_array = np.image(image.convert("L"))
+    def _calculate_background_uniformity(gray_array: np.ndarray) -> float:
         height, width = gray_array.shape
 
         local_std_blocks = []
