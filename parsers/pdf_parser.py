@@ -167,6 +167,18 @@ class ImageProcessor:
             int(base_padding * padding_multipliers['right']),
             int(base_padding * padding_multipliers['bottom'])
         )
+    
+    def _add_enhanced_adaptive_padding(self, image: Image.Image) -> Image.Image:
+        width, height = image.size
+        base_padding = max(int(min(width, height) * 0.02), 15)
+        edge_padding = self._calculate_adaptive_edge_padding(image, base_padding)
+
+        image = ImageOps.expand(image, border=edge_padding, fill='white')
+
+        print(f"Applied enhanced padding - Top: {edge_padding[1]}, Bottom: {edge_padding[3]}, "
+              f"Left: {edge_padding[0]}, Right: {edge_padding[2]}")
+        
+        return image
 
 
     def resize_if_needed(self, img, max_dim=2500):
