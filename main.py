@@ -1,59 +1,43 @@
-from parsers.pdf_parser import PDFParser
-from collections import defaultdict
-import textwrap
-import re
+import logging
+from app.document_processing.pdf import PDFProcessor
+from app.outputs.output_manager import OutputManager
 
-def print_readable_blocks(content_blocks):
-    grouped_pages = defaultdict(list)
-    for block in content_blocks:
-        grouped_pages[block.page_number].append(block)
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-    for page_num in sorted(grouped_pages.keys()):
-        print(f"\n{'='*80}")
-        print(f"PAGE {page_num}")
-        print(f"{'='*80}")
-
-        for i, block in enumerate(grouped_pages[page_num], 1):
-            print(f"\n[Block {i}] {block.content_type.upper()}")
-            print(f"Confidence: {block.confidence:.2%}")
-            print(f"Source: {block.metadata.get('source', 'text')}")
-            print("-" * 60)
-
-            content = block.content.strip()
-            if block.content_type == 'heading':
-                print(f"📌 {content}")
-            elif block.content_type == 'list':
-                print("📋 LIST ITEMS:")
-                for line in content.split('\n'):
-                    if line.strip():
-                        print(f"   • {line.strip()}")
-            else:
-                if block.metadata.get('source') == 'ocr':
-                    lines = content.split('\n')
-                    cleaned_lines = []
-                    for line in lines:
-                        line = line.strip()
-                        if line and not line.startswith('@'):
-                            cleaned_lines.append(line)
-                    content = ' '.join(cleaned_lines)
-
-                    content = re.sub(r'\s+', ' ', content)
-                    content = re.sub(r'(\w)\s+(\w)', r'\1 \2', content)
-                
-                wrapped_text = textwrap.fill(content, width=70, initial_indent="   ", subsequent_indent="   ")
-                print(wrapped_text  )
-
-            print()
-
-parser = PDFParser()
-pdf_path = "test_files/LISN09L Topic 7 (Revised).pdf"
-
-try:
-    content_blocks = parser.parse_pdf(pdf_path)
-
-    print_readable_blocks(content_blocks)
+def main():
+    # Configuration
+    pdf_file = "test_files/LISN09L Topic 7 (Revised).pdf"
+    output_dir = "outputs"
     
-except FileNotFoundError as e:
-    print(f"Error:{e}")
-except Exception as e:
-    print(f"Unexpected error: {e}")
+    # Process PDF (extraction only)
+    print("\nProcessing PDF...")
+    extractor = PDFProcessor(ocr_lang="en")
+    results = extractor.process_pdf(pdf_file)
+    
+    # Handle output saving (separate concern)
+    print("Saving results...")
+    output_manager = OutputManager(output_dir)
+    
+    # Save structured JSON
+    json_path = output_manager.save_structured_json(
+        results['pages_data'], 
+        results['base_name']
+    )
+    
+    # Format and save plain text  
+    formatted_text = output_manager.format_plain_text(results['pages_data'])
+    txt_path = output_manager.save_plain_text(
+        formatted_text, 
+        results['base_name']
+    )
+    
+    print("\nFiles saved:")
+    print(f"  JSON: {json_path}")
+    print(f"  Text: {txt_path}")
+    
+    return results
+
+if __name__ == "__main__":
+    main()
